@@ -1,0 +1,119 @@
+name: native
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            image: '20261023.334.3'
+            os: linux
+            arch: amd64
+            cc: gcc-14
+            gcc: '14.2.0'
+          - runner: ubuntu-24.04-arm
+            image: '20261023.149.3'
+            os: linux
+            arch: arm64
+            cc: gcc-14
+            gcc: '14.2.0'
+          - runner: macos-15-intel
+            image: '20260824.0482.1'
+            os: darwin
+            arch: amd64
+            cc: clang
+          - runner: macos-15
+            image: '20260907.0337.1'
+            os: darwin
+            arch: arm64
+            cc: clang
+          - runner: windows-2025
+            image: '20261021.278.1'
+            os: windows
+            arch: amd64
+            cc: gcc
+            gcc: '15.2.0'
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: '1'
+      GO_VERSION: '1.27.3'
+      GOTOOLCHAIN: local
+      CC: ${{ matrix.cc }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: false
+          cache: false
+      # Hosted labels float. Fail closed on image drift instead of silently
+      # changing native inputs; update these pins deliberately with evidence.
+      - name: Check runner and toolchain pins
+        env:
+          EXPECT_IMAGE: ${{ matrix.image }}
+          EXPECT_OS: ${{ matrix.os }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+          EXPECT_GCC: ${{ matrix.gcc }}
+        run: |
+          test "$ImageVersion" = "$EXPECT_IMAGE"
+          test "$(go env GOVERSION)" = "go$GO_VERSION"
+          test "$(go env GOOS)" = "$EXPECT_OS"
+          test "$(go env GOARCH)" = "$EXPECT_ARCH"
+          if [ "$EXPECT_OS" = darwin ]; then
+            export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+            test "$(xcodebuild -version)" = $'Xcode 16.4\nBuild version 16F6'
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          else
+            test "$("$CC" -dumpfullversion)" = "$EXPECT_GCC"
+            if [ "$EXPECT_OS" = windows ]; then
+              case "$(gcc -dumpmachine)" in *w64-mingw32) ;; *) exit 1 ;; esac
+            else
+              ldd --version
+            fi
+          fi
+          go version
+          "$CC" --version
+          echo "Runner image: $ImageVersion"
+      - name: Test native behavior
+        run: go test ./... -count=1
+      - name: Race detector
+        run: go test -race ./... -count=1
+      - name: Vet
+        run: go vet ./...
+      - name: Retained pointer, callback, streaming, backup and blob lifetime checks
+        env:
+          GOEXPERIMENT: cgocheck2
+        run: go test ./... -run 'Test(ParametersAndRetainedInputs|ColumnValuesAndReprepare|NativeAllocationFailures|Callback|Interrupt|BusyTimeout|BusyHandler|Session|Changeset|Stream|Backup|Blob)' -count=1
+      - name: Native public-interface smoke
+        run: go run ./internal/cmd/smoke
+      - name: Multiwriter native behavior, race detector and vet
+        env:
+          GOFLAGS: -tags=sqlite_multiwriter
+        run: |
+          go test ./... -count=1
+          go test -race ./... -count=1
+          go vet ./...
+      - name: Multiwriter strict cgo checks
+        env:
+          GOFLAGS: -tags=sqlite_multiwriter
+          GOEXPERIMENT: cgocheck2
+        run: go test ./... -count=1
+      - name: Multiwriter-tagged public-interface smoke and initialization failure
+        env:
+          GOFLAGS: -tags=sqlite_multiwriter
+        run: |
+          go run ./internal/cmd/smoke
+          go run ./internal/cmd/faultprobe init
+      - name: Multiwriter cold-open allocation recovery
+        if: ${{ matrix.os != 'windows' }}
+        env:
+          GOFLAGS: -tags=sqlite_multiwriter
+        run: go run ./internal/cmd/faultprobe multiwriter-open
+      - name: Warm allocation probes
+        run: go test -run '^$' -bench 'Benchmark(TypedNumeric|PreparedExec|ColumnAccess|ParameterLookup|Callbacks|Stream|Backup|Blob)' -benchmem -benchtime=100ms -count=1

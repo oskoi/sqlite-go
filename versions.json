@@ -1,0 +1,11 @@
+{
+  "sqlite": {
+    "version": "3.53.4",
+    "year": 2026,
+    "sha3_256": "628a44cfe82c66aed1ccbbe85a562d2e33ebe64b3288981ed76285612227934e"
+  },
+  "sqlite_multiwriter": {
+    "version": "0.6.4",
+    "commit": "e45f48d2ad7682b485f1637bd0249d8af5184372"
+  }
+}
