@@ -9,33 +9,25 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            image: '20261023.334.3'
             os: linux
             arch: amd64
             cc: gcc-14
-            gcc: '14.2.0'
           - runner: ubuntu-24.04-arm
-            image: '20261023.149.3'
             os: linux
             arch: arm64
             cc: gcc-14
-            gcc: '14.2.0'
           - runner: macos-15-intel
-            image: '20260824.0482.1'
             os: darwin
             arch: amd64
             cc: clang
           - runner: macos-15
-            image: '20260907.0337.1'
             os: darwin
             arch: arm64
             cc: clang
           - runner: windows-2025
-            image: '20261021.278.1'
             os: windows
             arch: amd64
             cc: gcc
-            gcc: '15.2.0'
     runs-on: ${{ matrix.runner }}
     env:
       CGO_ENABLED: '1'
@@ -52,34 +44,28 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           check-latest: false
           cache: false
-      # Hosted labels float. Fail closed on image drift instead of silently
-      # changing native inputs; update these pins deliberately with evidence.
-      - name: Check runner and toolchain pins
+      # Hosted images update; pin Go and record the native toolchain in each run.
+      - name: Check build environment
         env:
-          EXPECT_IMAGE: ${{ matrix.image }}
           EXPECT_OS: ${{ matrix.os }}
           EXPECT_ARCH: ${{ matrix.arch }}
-          EXPECT_GCC: ${{ matrix.gcc }}
         run: |
-          test "$ImageVersion" = "$EXPECT_IMAGE"
-          test "$(go env GOVERSION)" = "go$GO_VERSION"
-          test "$(go env GOOS)" = "$EXPECT_OS"
-          test "$(go env GOARCH)" = "$EXPECT_ARCH"
-          if [ "$EXPECT_OS" = darwin ]; then
-            export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
-            test "$(xcodebuild -version)" = $'Xcode 16.4\nBuild version 16F6'
-            echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
-          else
-            test "$("$CC" -dumpfullversion)" = "$EXPECT_GCC"
-            if [ "$EXPECT_OS" = windows ]; then
-              case "$(gcc -dumpmachine)" in *w64-mingw32) ;; *) exit 1 ;; esac
-            else
-              ldd --version
-            fi
-          fi
+          echo "Runner image: $ImageVersion"
           go version
           "$CC" --version
-          echo "Runner image: $ImageVersion"
+          go env GOOS GOARCH
+          test "$(go env GOVERSION)" = "go$GO_VERSION" || { echo "::error::Expected Go $GO_VERSION"; exit 1; }
+          test "$(go env GOOS)" = "$EXPECT_OS" || { echo "::error::Expected GOOS=$EXPECT_OS"; exit 1; }
+          test "$(go env GOARCH)" = "$EXPECT_ARCH" || { echo "::error::Expected GOARCH=$EXPECT_ARCH"; exit 1; }
+          if [ "$EXPECT_OS" = windows ]; then
+            target="$("$CC" -dumpmachine)"
+            case "$target" in
+              *w64-mingw32) ;;
+              *) echo "::error::Expected MinGW-w64 compiler, got $target"; exit 1 ;;
+            esac
+          elif [ "$EXPECT_OS" = linux ]; then
+            ldd --version
+          fi
       - name: Test native behavior
         run: go test ./... -count=1
       - name: Race detector

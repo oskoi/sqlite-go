@@ -114,7 +114,14 @@ func TestOpenAndStrictClose(t *testing.T) {
 		must(t, err)
 		defer ro.Close()
 		coreContractError(t, ro.ExecScript("INSERT INTO harbors VALUES(18, 'North Bell')"), CodeReadOnly)
-		uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String()
+		uriPath, err := filepath.Abs(path)
+		must(t, err)
+		uriPath = filepath.ToSlash(uriPath)
+		// File URI paths need a leading slash, including Windows drive paths.
+		if !strings.HasPrefix(uriPath, "/") {
+			uriPath = "/" + uriPath
+		}
+		uri := (&url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro"}).String()
 		reader, err := Open(uri, OpenReadOnly|OpenURI)
 		must(t, err)
 		defer reader.Close()
